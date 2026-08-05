@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/calebbray/personal-agent/internal/tools"
@@ -16,29 +15,16 @@ import (
 const MaxTokenRequest = 4046
 const AnthropicURL = "https://api.anthropic.com/v1/messages"
 const AnthropicVersion = "2023-06-01"
-const Model = "claude-haiku-4-5"
+const AnthropicModel = "claude-haiku-4-5"
 
-type Client struct {
+type AnthropicClient struct {
 	client *http.Client
 	key    string
 	model  string
 }
 
-func New() (*Client, error) {
-	key := os.Getenv("ANTHROPIC_API_KEY")
-	if key == "" {
-		return nil, fmt.Errorf("no api key set")
-	}
-
-	return &Client{
-		key:    key,
-		client: &http.Client{},
-		model:  Model,
-	}, nil
-}
-
 // temporarily sending tools, maybe later this should be a property on the client. Not sure yet where that lives
-func (c *Client) Send(msgs []Message, tools []tools.ToolDef) (*Response, error) {
+func (c *AnthropicClient) Send(msgs []Message, tools []tools.ToolDef) (*Response, error) {
 	body := request{
 		Model:     c.model,
 		MaxTokens: MaxTokenRequest,

@@ -1,37 +1,27 @@
 package client
 
+import (
+	"sync"
+
+	"github.com/calebbray/personal-agent/internal/tools"
+)
+
 type MockClient struct {
-	inCh    chan string
-	outCh   chan Content
-	history []Message
+	Responses []*Response
+	calls     int
+	mu        sync.Mutex
 }
 
-func NewMockClient() *MockClient {
-	return &MockClient{
-		inCh:    make(chan string),
-		outCh:   make(chan Content),
-		history: make([]Message, 0),
+func (mc *MockClient) Send(messages []Message, tools []tools.ToolDef) (*Response, error) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if mc.calls >= len(mc.Responses) {
+		return &Response{StopReason: "end_turn", Content: []Content{
+			TextContent{ContentType: "text", Text: "mock: out of responses"},
+		}}, nil
 	}
-}
 
-func (c *MockClient) waitForMessage() {
-	for {
-		query := <-c.inCh
-		c.handleQuery(query)
-	}
-}
-
-func (c *MockClient) Consume() <-chan Content {
-	return c.outCh
-}
-
-func (c *MockClient) SendMessage(msg string) error {
-	c.inCh <- msg
-
-	return nil
-}
-
-func (c *MockClient) handleQuery(question string) error {
-	c.outCh <- TextContent{ContentType: "text", Text: question + " " + "pong"}
-	return nil
+	r := mc.Responses[mc.calls]
+	mc.calls++
+	return r, nil
 }

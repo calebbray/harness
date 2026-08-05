@@ -11,12 +11,13 @@ import (
 
 type Agent struct {
 	AgentConfig
-	history   []client.Message
-	confirmer Confirmer
+	history    []client.Message
+	confirmer  Confirmer
+	lastResult string
 }
 
 type AgentConfig struct {
-	Client              *client.Client
+	Client              client.Client
 	Tools               *tools.Registry
 	EnforceConfirmation bool
 	Logger              *slog.Logger
@@ -28,6 +29,10 @@ func New(cfg AgentConfig) *Agent {
 		history:     make([]client.Message, 0),
 		confirmer:   DefaultConfirmer(cfg.EnforceConfirmation),
 	}
+}
+
+func (a *Agent) Result() string {
+	return a.lastResult
 }
 
 const maxIterations = 10
@@ -61,9 +66,11 @@ func (a *Agent) step() (bool, error) {
 	}
 
 	if res.StopReason != "tool_use" {
+		a.history = append(a.history, client.Message{Role: "assistant", Content: res.Content})
 		for _, content := range res.Content {
 			if t, ok := content.(client.TextContent); ok {
-				fmt.Println(t.Text)
+				// fmt.Println(t.Text)
+				a.lastResult = t.Text
 			}
 		}
 		return true, nil

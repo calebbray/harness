@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/calebbray/personal-agent/internal/agent"
+	"github.com/calebbray/personal-agent/internal/workerpool"
 )
 
 type Repl struct {
@@ -17,8 +18,10 @@ type Repl struct {
 }
 
 type ReplConfig struct {
-	Logger *slog.Logger
-	Agent  *agent.Agent
+	Logger     *slog.Logger
+	Agent      *agent.Agent
+	WorkerPool *workerpool.WorkerPool
+	Store      *workerpool.Store
 }
 
 func New(cfg ReplConfig) *Repl {
@@ -46,12 +49,27 @@ func (r *Repl) Run() error {
 		if line == "" {
 			continue
 		}
-		if line == "exit" {
-			break
-		}
 
-		if err := r.Agent.Step(line); err != nil {
-			r.Logger.Error("step error", "error", err)
+		switch {
+		case line == "exit":
+			return nil
+		case strings.HasPrefix(line, "/task "):
+			instruction := strings.TrimPrefix(line, "/task ")
+			task := r.WorkerPool.Submit(instruction)
+			r.Store.Add(task.Job)
+			fmt.Printf("queued job #%d\n", task.Job.Id)
+		case line == "/tasks":
+			for _, j := range r.Store.Jobs() {
+				status, result := j.Snapshot()
+				fmt.Printf("#%d [%s] %s -> %q\n", j.Id, status, j.Instruction, result)
+			}
+		default:
+			if err := r.Agent.Step(line); err != nil {
+				r.Logger.Error("step error", "error", err)
+				continue
+			}
+
+			fmt.Println(r.Agent.Result())
 		}
 
 	}

@@ -10,6 +10,7 @@ import (
 	"github.com/calebbray/personal-agent/internal/logging"
 	"github.com/calebbray/personal-agent/internal/repl"
 	"github.com/calebbray/personal-agent/internal/tools"
+	"github.com/calebbray/personal-agent/internal/workerpool"
 )
 
 func main() {
@@ -21,7 +22,7 @@ func main() {
 
 	fileHandler := slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug})
 
-	stdoutLevel := slog.LevelInfo // default
+	stdoutLevel := slog.LevelWarn // default
 	if level := os.Getenv("LOG_LEVEL"); level != "" {
 		stdoutLevel.UnmarshalText([]byte(level))
 	}
@@ -30,7 +31,7 @@ func main() {
 
 	logger := slog.New(logging.NewFanout(fileHandler, stdoutHandler))
 
-	c, err := client.New()
+	c, err := client.New("anthropic")
 	if err != nil {
 		logger.Error("failed to create client", "err", err)
 	}
@@ -38,15 +39,26 @@ func main() {
 	toolRegistry := tools.Default()
 
 	a := agent.New(agent.AgentConfig{
-		EnforceConfirmation: true,
+		EnforceConfirmation: false,
 		Tools:               toolRegistry,
 		Client:              c,
 		Logger:              logger,
 	})
 
-	r := repl.New(repl.ReplConfig{
-		Agent:  a,
+	wp := workerpool.New(3, workerpool.TaskConfig{
+		Client: c,
+		Tools:  toolRegistry,
 		Logger: logger,
+	})
+	defer wp.Close()
+
+	wp.Run()
+
+	r := repl.New(repl.ReplConfig{
+		Agent:      a,
+		Logger:     logger,
+		Store:      workerpool.NewStore(),
+		WorkerPool: wp,
 	})
 	r.Run()
 }
