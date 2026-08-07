@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/calebbray/personal-agent/internal/tools/jira"
 )
 
 type Handler func(input json.RawMessage) (string, error)
@@ -86,6 +88,17 @@ func Default() *Registry {
 		handleWriteFile,
 		true,
 	)
+
+	jiraTools, err := jira.NewJiraTools()
+	if err == nil {
+		r.Register(
+			"jira_cycle_time",
+			"get the average cycle time of issues for a jira project.",
+			jira.JiraCycleTimeSchema,
+			jiraTools.HandleJiraCycleTime,
+			false,
+		)
+	}
 
 	return r
 }
