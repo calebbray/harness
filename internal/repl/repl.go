@@ -55,11 +55,18 @@ func (r *Repl) Run() error {
 			return nil
 		case strings.HasPrefix(line, "/task "):
 			instruction := strings.TrimPrefix(line, "/task ")
-			task := r.WorkerPool.Submit(instruction)
-			r.Store.Add(task.Job)
+			task, err := r.WorkerPool.Submit(instruction)
+			if err != nil {
+				fmt.Printf("couldn't submit job for processing %s", err)
+			}
 			fmt.Printf("queued job #%d\n", task.Job.Id)
 		case line == "/tasks":
-			for _, j := range r.Store.Jobs() {
+			jobs, err := r.Store.GetJobs()
+			if err != nil {
+				fmt.Printf("failed to fetch jobs")
+				continue
+			}
+			for _, j := range jobs {
 				status, result := j.Snapshot()
 				fmt.Printf("#%d [%s] %s -> %q\n", j.Id, status, j.Instruction, result)
 			}

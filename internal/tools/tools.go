@@ -62,7 +62,7 @@ func (r *Registry) Dispatch(name string, input json.RawMessage) (result string, 
 	return "no tool with given name", true
 }
 
-func Default() *Registry {
+func Default(issueSaver jira.JiraSaver) *Registry {
 	r := NewRegistry()
 
 	r.Register(
@@ -89,7 +89,7 @@ func Default() *Registry {
 		true,
 	)
 
-	jiraTools, err := jira.NewJiraTools()
+	jiraTools, err := jira.NewJiraTools(issueSaver)
 	if err == nil {
 		r.Register(
 			"jira_cycle_time",

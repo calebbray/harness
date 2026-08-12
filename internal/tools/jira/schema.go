@@ -15,6 +15,10 @@ type changelog struct {
 			} `json:"items"`
 		} `json:"histories"`
 	} `json:"changelog"`
+	Fields struct {
+		Title string  `json:"summary"`
+		Loe   float64 `json:"customfield_10004"`
+	} `json:"fields"`
 }
 
 func (cl changelog) finish(categories statusCategories) (int64, bool) {

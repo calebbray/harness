@@ -1,9 +1,9 @@
 package workerpool
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 
 	"github.com/calebbray/personal-agent/internal/agent"
 	"github.com/calebbray/personal-agent/internal/client"
@@ -34,49 +34,23 @@ func (s Status) String() string {
 	}
 }
 
-var idCounter atomic.Int64
-
 type Job struct {
 	Id          int64
 	Instruction string
 	Status      Status
 	Result      string
-	mu          sync.Mutex
 }
 
-func NewJob(instuction string) *Job {
+func NewJob(id int64, instuction string) *Job {
 	return &Job{
-		Id:          idCounter.Add(1),
+		Id:          id,
 		Instruction: instuction,
 		Status:      Pending,
 	}
 }
 
-// get the current status and result
 func (j *Job) Snapshot() (Status, string) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
 	return j.Status, j.Result
-}
-
-func (j *Job) start() {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.Status = Running
-}
-
-func (j *Job) done(reason string) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.Status = Done
-	j.Result = reason
-}
-
-func (j *Job) fail(e error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.Status = Failed
-	j.Result = e.Error()
 }
 
 type Task struct {
@@ -89,11 +63,12 @@ type TaskConfig struct {
 	Client client.Client
 	Tools  *tools.Registry
 	Logger *slog.Logger
+	Store  *Store
 }
 
-func NewTask(instructions string, cfg TaskConfig) *Task {
+func NewTask(id int64, instructions string, cfg TaskConfig) *Task {
 	return &Task{
-		Job: NewJob(instructions),
+		Job: NewJob(id, instructions),
 		Agent: agent.New(agent.AgentConfig{
 			Tools:               cfg.Tools,
 			Client:              cfg.Client,
@@ -103,37 +78,41 @@ func NewTask(instructions string, cfg TaskConfig) *Task {
 	}
 }
 
-func (t *Task) Process() {
-	t.Job.start()
+func (t *Task) Process(store *Store) {
+	store.MarkRunning(t.Job.Id)
 	if err := t.Agent.Step(t.Job.Instruction); err != nil {
-		t.Job.fail(err)
+		store.MarkFailed(t.Job.Id, err.Error())
 		return
 	}
-	t.Job.done(t.Agent.Result())
+	store.MarkDone(t.Job.Id, t.Agent.Result())
 }
 
 type WorkerPool struct {
+	TaskConfig
 	taskCh     chan *Task
 	concurrent int
 	wg         sync.WaitGroup
-	taskConfig TaskConfig
 }
 
 func New(workers int, cfg TaskConfig) *WorkerPool {
 	return &WorkerPool{
 		taskCh:     make(chan *Task, 100),
 		concurrent: workers,
-		taskConfig: cfg,
+		TaskConfig: cfg,
 	}
 }
 
-func (wp *WorkerPool) Submit(instructions string) *Task {
-	t := NewTask(instructions, wp.taskConfig)
+func (wp *WorkerPool) Submit(instructions string) (*Task, error) {
+	id, err := wp.Store.InsertJob(instructions)
+	if err != nil {
+		return nil, err
+	}
+	t := NewTask(id, instructions, wp.TaskConfig)
 	wp.wg.Add(1)
 	go func() {
 		wp.taskCh <- t
 	}()
-	return t
+	return t, nil
 }
 
 func (wp *WorkerPool) Run() {
@@ -144,7 +123,8 @@ func (wp *WorkerPool) Run() {
 
 func (wp *WorkerPool) worker() {
 	for task := range wp.taskCh {
-		task.Process()
+		fmt.Println("job complete", task.Job.Instruction)
+		task.Process(wp.Store)
 		wp.wg.Done()
 	}
 }

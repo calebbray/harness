@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ type AgentConfig struct {
 	Tools               *tools.Registry
 	EnforceConfirmation bool
 	Logger              *slog.Logger
+	Database            *sql.DB
 }
 
 func New(cfg AgentConfig) *Agent {

@@ -4,9 +4,11 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path"
 
 	"github.com/calebbray/personal-agent/internal/agent"
 	"github.com/calebbray/personal-agent/internal/client"
+	"github.com/calebbray/personal-agent/internal/db"
 	"github.com/calebbray/personal-agent/internal/logging"
 	"github.com/calebbray/personal-agent/internal/repl"
 	"github.com/calebbray/personal-agent/internal/tools"
@@ -36,19 +38,34 @@ func main() {
 		logger.Error("failed to create client", "err", err)
 	}
 
-	toolRegistry := tools.Default()
+	database, err := db.New("agent.db")
+	if err != nil {
+		log.Fatalf("failed to open db: %s", err)
+	}
+	defer database.Close()
+
+	if err := db.Initialize(database, path.Join("sql", "schema.sql")); err != nil {
+		logger.Error("could not initialize database", "err", err)
+	}
+
+	store := workerpool.NewStore(database)
+	store.MarkInterrupted()
+
+	toolRegistry := tools.Default(store)
 
 	a := agent.New(agent.AgentConfig{
 		EnforceConfirmation: false,
 		Tools:               toolRegistry,
 		Client:              c,
 		Logger:              logger,
+		Database:            database,
 	})
 
 	wp := workerpool.New(3, workerpool.TaskConfig{
 		Client: c,
 		Tools:  toolRegistry,
 		Logger: logger,
+		Store:  store,
 	})
 	defer wp.Close()
 
@@ -57,7 +74,7 @@ func main() {
 	r := repl.New(repl.ReplConfig{
 		Agent:      a,
 		Logger:     logger,
-		Store:      workerpool.NewStore(),
+		Store:      store,
 		WorkerPool: wp,
 	})
 	r.Run()

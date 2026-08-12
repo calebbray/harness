@@ -13,21 +13,26 @@ import (
 
 const jiraDomain = "https://lightcast-io.atlassian.net"
 
+type JiraSaver interface {
+	SaveIssue(key, title string, loe int, teamId int, started_at, finished_at int64) error
+	GetTeamIdByName(string) (int, error)
+}
+
 type statusCategories map[string]string
 
 type JiraTools struct {
-	client *jiraClient
-
+	client     *jiraClient
+	store      JiraSaver
 	once       sync.Once
 	categories statusCategories
 }
 
-func NewJiraTools() (*JiraTools, error) {
+func NewJiraTools(store JiraSaver) (*JiraTools, error) {
 	client, err := newClient()
 	if err != nil {
 		return nil, err
 	}
-	return &JiraTools{client: client}, nil
+	return &JiraTools{client: client, store: store}, nil
 }
 
 func (jt *JiraTools) getCategories() error {
@@ -99,10 +104,10 @@ func (jc *jiraClient) fetchStatusCategories() (statusCategories, error) {
 	return categories, nil
 }
 
-func (jc *jiraClient) fetchSprintIssues(projectName string) ([]jiraIssue, error) {
+func (jc *jiraClient) fetchSprintIssues(teamBoardName string) ([]jiraIssue, error) {
 	// for now I'm just having a simple switch, but will have a better implementation for this when we have some more caching
 	var boardId string
-	switch projectName {
+	switch teamBoardName {
 	case "API":
 		boardId = "467"
 	case "ADR":
@@ -122,7 +127,7 @@ func (jc *jiraClient) fetchSprintIssues(projectName string) ([]jiraIssue, error)
 	}
 
 	if len(b.Values) == 0 {
-		return nil, fmt.Errorf("no active sprint for project")
+		return nil, fmt.Errorf("no active srint for project")
 	}
 
 	data, err = jc.get(strings.TrimPrefix(b.Values[0].SprintUrl, jiraDomain) + "/issue")
@@ -154,6 +159,19 @@ func (jt *JiraTools) issueCycleTime(key string, ch chan cycleReport) error {
 		return nil
 	}
 
+	parts := strings.Split(key, "-")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid key format. Expected {team}-{issue number}, got=%s", key)
+	}
+
+	teamId, err := jt.store.GetTeamIdByName(parts[0])
+	if err != nil {
+		return fmt.Errorf("could not get id for team with name: %s (%s)", parts[0], err)
+	}
+
+	if err := jt.store.SaveIssue(key, cl.Fields.Title, int(cl.Fields.Loe), teamId, s, f); err != nil {
+		fmt.Printf("Error saving issue to store %s\n", err)
+	}
 	ch <- cycleReport{Key: key, CycleTime: time.Duration(f - s)}
 	return nil
 }
@@ -235,3 +253,16 @@ func (jt *JiraTools) HandleJiraCycleTime(input json.RawMessage) (string, error) 
 	return string(data), nil
 
 }
+
+const SyncIssueSchema = `{
+	"type": "object",
+	"properties": {
+		"project": {
+			"type": "string",
+			"description": "project id to use"
+		}
+	},
+	"required": ["project"]
+}`
+
+func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) error
