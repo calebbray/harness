@@ -2,10 +2,13 @@ package db
 
 import (
 	"database/sql"
-	"os"
+	_ "embed"
 
 	_ "modernc.org/sqlite"
 )
+
+//go:embed schema.sql
+var schemaSql string
 
 func New(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", path)
@@ -16,13 +19,8 @@ func New(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func Initialize(db *sql.DB, schema string) error {
-	data, err := os.ReadFile(schema)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(string(data))
+func Initialize(db *sql.DB) error {
+	_, err := db.Exec(schemaSql)
 	if err != nil {
 		return err
 	}

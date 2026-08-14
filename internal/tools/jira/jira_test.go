@@ -8,10 +8,24 @@ import (
 )
 
 func TestJiraCycleTimeHandler(t *testing.T) {
-	jt, err := NewJiraTools()
+	jt, err := NewJiraTools(MockSaver{})
 	require.NoError(t, err)
 
-	data, err := jt.HandleJiraCycleTime(json.RawMessage(`{"project": "API"}`))
+	_, err = jt.HandleCycleTimeStatistics(json.RawMessage(`{"project": "API"}`))
 	require.NoError(t, err)
-	t.Log(data)
+}
+
+type MockSaver struct{}
+
+func (MockSaver) SaveIssue(key, title string, loe int, teamId int, started_at, finished_at int64) error {
+	return nil
+}
+func (MockSaver) SaveIssues([]Issue) (saved, updated int, err error) {
+	return 0, 0, nil
+}
+func (MockSaver) GetTeamIdByName(string) (int, error) {
+	return 0, nil
+}
+func (MockSaver) GetIssuesFinishedInTimeframe(teamId int, start, end int64) ([]Issue, error) {
+	return nil, nil
 }

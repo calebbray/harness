@@ -111,7 +111,7 @@ func main() {
 	defer database.Close()
 	logger.Info("initialized db", "path", dbPath)
 
-	if err := db.Initialize(database, path.Join("sql", "schema.sql")); err != nil {
+	if err := db.Initialize(database); err != nil {
 		logger.Error("could not initialize database", "err", err)
 	}
 
