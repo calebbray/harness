@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/calebbray/personal-agent/internal/agent"
 	"github.com/calebbray/personal-agent/internal/client"
@@ -15,8 +17,70 @@ import (
 	"github.com/calebbray/personal-agent/internal/workerpool"
 )
 
+var version = "dev"
+
+func loadEnv(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if _, exists := os.LookupEnv(key); !exists {
+			os.Setenv(key, value)
+		}
+	}
+	return nil
+}
+
+func dataDir() (string, error) {
+	if dir := os.Getenv("HARNESS_DATA_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("failed to create HARNESS_DATA_DIR: %q: %w", dir, err)
+		}
+		return dir, nil
+	}
+
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve user config dir: %w", err)
+	}
+
+	dir := path.Join(configDir, "harness")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create data dir %q: %w", dir, err)
+	}
+	return dir, nil
+}
+
 func main() {
-	logFile, err := os.OpenFile("agent.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println("harness", version)
+		return
+	}
+	dir, err := dataDir()
+	if err != nil {
+		log.Fatalf("failed to resolve data directory: %s", err)
+	}
+
+	if err := loadEnv(path.Join(dir, ".env")); err != nil {
+		log.Fatalf("failed to load env: %s", err)
+	}
+
+	logPath := path.Join(dir, "agent.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		log.Fatalf("failed to open log file: %s", err)
 	}
@@ -32,17 +96,20 @@ func main() {
 	stdoutHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: stdoutLevel})
 
 	logger := slog.New(logging.NewFanout(fileHandler, stdoutHandler))
+	logger.Info("initialized agent log", "path", logPath)
 
 	c, err := client.New("anthropic")
 	if err != nil {
 		logger.Error("failed to create client", "err", err)
 	}
 
-	database, err := db.New("agent.db")
+	dbPath := path.Join(dir, "agent.db")
+	database, err := db.New(dbPath)
 	if err != nil {
 		log.Fatalf("failed to open db: %s", err)
 	}
 	defer database.Close()
+	logger.Info("initialized db", "path", dbPath)
 
 	if err := db.Initialize(database, path.Join("sql", "schema.sql")); err != nil {
 		logger.Error("could not initialize database", "err", err)

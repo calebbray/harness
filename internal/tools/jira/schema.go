@@ -16,8 +16,8 @@ type changelog struct {
 		} `json:"histories"`
 	} `json:"changelog"`
 	Fields struct {
-		Title string  `json:"summary"`
-		Loe   float64 `json:"customfield_10004"`
+		Title string   `json:"summary"`
+		Loe   *float64 `json:"customfield_10004"`
 	} `json:"fields"`
 }
 
@@ -59,7 +59,15 @@ func (cl changelog) start(categories statusCategories) (int64, bool) {
 
 func parseIsoTimestamp(stamp string) int64 {
 	t, _ := time.Parse("2006-01-02T15:04:05.000-0700", stamp)
-	return t.UnixNano()
+	return t.Unix()
+}
+
+func parseRFCTimestamp(stamp string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t, nil
 }
 
 type cycleTimeResponse struct {
@@ -67,7 +75,7 @@ type cycleTimeResponse struct {
 	Metrics metrics           `json:"metrics"`
 }
 
-type jiraIssue struct {
+type jiraIssueKey struct {
 	Key string `json:"key"`
 }
 
@@ -78,7 +86,7 @@ type board struct {
 }
 
 type sprint struct {
-	Issues []jiraIssue `json:"issues"`
+	Issues []jiraIssueKey `json:"issues"`
 }
 
 type cycleReport struct {

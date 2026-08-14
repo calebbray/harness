@@ -89,13 +89,23 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 		true,
 	)
 
+	// TODO: add a time / calendar tool that doesn't have to run a bunch of bash commands
+
 	jiraTools, err := jira.NewJiraTools(issueSaver)
 	if err == nil {
 		r.Register(
 			"jira_cycle_time",
-			"get the average cycle time of issues for a jira project.",
+			"get cycle time statistics for a jira project over a particular time frame. Defaults to the last two weeks",
 			jira.JiraCycleTimeSchema,
-			jiraTools.HandleJiraCycleTime,
+			jiraTools.HandleCycleTimeStatistics,
+			false,
+		)
+
+		r.Register(
+			"jira_sync_issues",
+			"sync jira issues for a team",
+			jira.SyncIssueSchema,
+			jiraTools.HandleJiraIssueSync,
 			false,
 		)
 	}

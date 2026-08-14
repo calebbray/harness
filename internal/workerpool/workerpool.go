@@ -1,7 +1,6 @@
 package workerpool
 
 import (
-	"fmt"
 	"log/slog"
 	"sync"
 
@@ -123,7 +122,6 @@ func (wp *WorkerPool) Run() {
 
 func (wp *WorkerPool) worker() {
 	for task := range wp.taskCh {
-		fmt.Println("job complete", task.Job.Instruction)
 		task.Process(wp.Store)
 		wp.wg.Done()
 	}

@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS teams(
     label TEXT NOT NULL UNIQUE
 );
 INSERT OR IGNORE INTO teams (id, label) VALUES (467, 'API');
-INSERT OR IGNORE INTO teams (id, label) VALUES (6988, 'APR');
+INSERT OR IGNORE INTO teams (id, label) VALUES (6988, 'ADR');
 INSERT OR IGNORE INTO teams (id, label) VALUES (478, 'APIENG');
 
 

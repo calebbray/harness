@@ -15,7 +15,9 @@ const jiraDomain = "https://lightcast-io.atlassian.net"
 
 type JiraSaver interface {
 	SaveIssue(key, title string, loe int, teamId int, started_at, finished_at int64) error
+	SaveIssues([]Issue) (saved, updated int, err error)
 	GetTeamIdByName(string) (int, error)
+	GetIssuesFinishedInTimeframe(teamId int, start, end int64) ([]Issue, error)
 }
 
 type statusCategories map[string]string
@@ -104,7 +106,7 @@ func (jc *jiraClient) fetchStatusCategories() (statusCategories, error) {
 	return categories, nil
 }
 
-func (jc *jiraClient) fetchSprintIssues(teamBoardName string) ([]jiraIssue, error) {
+func (jc *jiraClient) fetchSprintIssues(teamBoardName string) ([]jiraIssueKey, error) {
 	// for now I'm just having a simple switch, but will have a better implementation for this when we have some more caching
 	var boardId string
 	switch teamBoardName {
@@ -127,7 +129,7 @@ func (jc *jiraClient) fetchSprintIssues(teamBoardName string) ([]jiraIssue, erro
 	}
 
 	if len(b.Values) == 0 {
-		return nil, fmt.Errorf("no active srint for project")
+		return nil, fmt.Errorf("no active sprint for project")
 	}
 
 	data, err = jc.get(strings.TrimPrefix(b.Values[0].SprintUrl, jiraDomain) + "/issue")
@@ -142,56 +144,107 @@ func (jc *jiraClient) fetchSprintIssues(teamBoardName string) ([]jiraIssue, erro
 	return s.Issues, nil
 }
 
-func (jt *JiraTools) issueCycleTime(key string, ch chan cycleReport) error {
+type Issue struct {
+	Key    string
+	TeamId int
+	Title  string
+	// Pointer fields since these can be null in the db
+	Loe        *int
+	StartedAt  *int64
+	FinishedAt *int64
+}
+
+func (jt *JiraTools) getIssue(key string) (Issue, error) {
+	var i Issue
+	i.Key = key
+	parts := strings.Split(key, "-")
+	if len(parts) != 2 {
+		return i, fmt.Errorf("invalid key format. Expected {team}-{issue number}, got=%s", key)
+	}
+
 	data, err := jt.client.get(fmt.Sprintf("/rest/api/2/issue/%s?expand=changelog", key))
 	if err != nil {
-		return err
+		return i, err
 	}
 
 	var cl changelog
 	if err = json.Unmarshal(data, &cl); err != nil {
-		return err
+		return i, err
+	}
+	i.Title = cl.Fields.Title
+
+	if cl.Fields.Loe != nil {
+		v := int(*cl.Fields.Loe)
+		i.Loe = &v
 	}
 
-	s, sok := cl.start(jt.categories)
-	f, fok := cl.finish(jt.categories)
-	if !sok || !fok {
-		return nil
+	if s, ok := cl.start(jt.categories); ok {
+		i.StartedAt = &s
 	}
 
-	parts := strings.Split(key, "-")
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid key format. Expected {team}-{issue number}, got=%s", key)
+	if f, ok := cl.finish(jt.categories); ok {
+		i.FinishedAt = &f
 	}
 
-	teamId, err := jt.store.GetTeamIdByName(parts[0])
+	i.TeamId, err = jt.store.GetTeamIdByName(parts[0])
 	if err != nil {
-		return fmt.Errorf("could not get id for team with name: %s (%s)", parts[0], err)
+		return i, fmt.Errorf("could not get id for team with name: %s (%s)", parts[0], err)
 	}
 
-	if err := jt.store.SaveIssue(key, cl.Fields.Title, int(cl.Fields.Loe), teamId, s, f); err != nil {
-		fmt.Printf("Error saving issue to store %s\n", err)
-	}
-	ch <- cycleReport{Key: key, CycleTime: time.Duration(f - s)}
-	return nil
+	return i, nil
 }
 
 const JiraCycleTimeSchema = `{
 	"type": "object",
 	"properties": {
-		"project": {
-			"type": "string",
-			"description": "project id to use"
-		}
+		"project": {"type": "string", "description": "project id to use"},
+		"start_date": {"type": "string", "description": "Lower bound, RFC3339, e.g. \"2026-08-08T16:13:05Z\". Defaults to 2 weeks before end_date (or now)."},
+		"end_date": {"type": "string", "description": "Upper bound, RFC3339, e.g. \"2026-08-08T16:13:05Z\". Defaults to now, or 2 weeks after start_date if only start_date is given."}
 	},
 	"required": ["project"]
 }`
 
 type jiraCycleTimeInput struct {
-	Project string `json:"project"`
+	Project   string `json:"project"`
+	StartDate string `json:"start_date"`
+	EndDate   string `json:"end_date"`
 }
 
-func (jt *JiraTools) HandleJiraCycleTime(input json.RawMessage) (string, error) {
+// TODO: realistically this belongs in some kind of utility package but for now it lives in jira
+func resolveWindow(startStr, endStr string) (start, end time.Time, err error) {
+	if startStr != "" && endStr != "" {
+		start, err = parseRFCTimestamp(startStr)
+		if err != nil {
+			return start, end, err
+		}
+		end, err = parseRFCTimestamp(endStr)
+		return start, end, err
+	}
+
+	if startStr == "" && endStr == "" {
+		end = time.Now()
+		start = end.AddDate(0, 0, -14)
+		return start, end, nil
+	}
+
+	if startStr == "" {
+		end, err = parseRFCTimestamp(endStr)
+		if err != nil {
+			return start, end, err
+		}
+		start = end.AddDate(0, 0, -14)
+		return start, end, nil
+	}
+
+	start, err = parseRFCTimestamp(startStr)
+	if err != nil {
+		return start, end, err
+	}
+	end = start.AddDate(0, 0, 14)
+	return start, end, nil
+}
+
+func (jt *JiraTools) HandleCycleTimeStatistics(input json.RawMessage) (string, error) {
 	err := jt.getCategories()
 	if err != nil {
 		return "", err
@@ -202,47 +255,37 @@ func (jt *JiraTools) HandleJiraCycleTime(input json.RawMessage) (string, error) 
 		return "", err
 	}
 
-	// for now, we'll just construct the client every time
-	jc, err := newClient()
+	start, end, err := resolveWindow(in.StartDate, in.EndDate)
 	if err != nil {
 		return "", err
 	}
 
-	issues, err := jc.fetchSprintIssues(in.Project)
+	teamId, err := jt.store.GetTeamIdByName(in.Project)
 	if err != nil {
 		return "", err
 	}
 
-	cycleCh := make(chan cycleReport, len(issues))
-	var wg sync.WaitGroup
-	results := make(cycleData)
-
-	for _, issue := range issues {
-		wg.Add(1)
-		go func(issue jiraIssue) {
-			defer wg.Done()
-			if err := jt.issueCycleTime(issue.Key, cycleCh); err != nil {
-				fmt.Println(err)
-			}
-		}(issue)
+	issues, err := jt.store.GetIssuesFinishedInTimeframe(teamId, start.Unix(), end.Unix())
+	if err != nil {
+		return "", err
 	}
 
-	go func() {
-		wg.Wait()
-		close(cycleCh)
-	}()
-
-	for report := range cycleCh {
-		results[report.Key] = report.CycleTime
+	mets := make(cycleData)
+	for _, iss := range issues {
+		// safety guard around potential nil pointers. Should never encounter this.
+		if iss.FinishedAt == nil || iss.StartedAt == nil {
+			continue
+		}
+		mets[iss.Key] = time.Duration(*iss.FinishedAt-*iss.StartedAt) * time.Second
 	}
 
 	response := cycleTimeResponse{
-		Issues: toIssueOutput(results),
+		Issues: toIssueOutput(mets),
 		Metrics: metrics{
-			Average:      results.Avg().String(),
-			Median:       results.Median().String(),
-			Percentile25: results.Percentile(25).String(),
-			Percentile75: results.Percentile(75).String(),
+			Average:      mets.Avg().String(),
+			Median:       mets.Median().String(),
+			Percentile25: mets.Percentile(25).String(),
+			Percentile75: mets.Percentile(75).String(),
 		},
 	}
 
@@ -251,7 +294,6 @@ func (jt *JiraTools) HandleJiraCycleTime(input json.RawMessage) (string, error) 
 		return "", err
 	}
 	return string(data), nil
-
 }
 
 const SyncIssueSchema = `{
@@ -259,10 +301,46 @@ const SyncIssueSchema = `{
 	"properties": {
 		"project": {
 			"type": "string",
-			"description": "project id to use"
+			"description": "identifier of the team that to pull issues for. Might be in stringified number, jira project label, or a stored alias of a team."
 		}
 	},
 	"required": ["project"]
 }`
 
-func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) error
+type jiraSyncIssuesInput struct {
+	Project string `json:"project"`
+}
+
+func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) (string, error) {
+	err := jt.getCategories()
+	if err != nil {
+		return "", err
+	}
+
+	var in jiraSyncIssuesInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return "", err
+	}
+	keys, err := jt.client.fetchSprintIssues(in.Project)
+	if err != nil {
+		return "", err
+	}
+
+	var issues []Issue
+	var errors []error
+	for _, key := range keys {
+		iss, err := jt.getIssue(key.Key)
+		if err != nil {
+			errors = append(errors, fmt.Errorf("could not get issue %s: %s", key.Key, err))
+			continue
+		}
+		issues = append(issues, iss)
+	}
+
+	saved, updated, err := jt.store.SaveIssues(issues)
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("Saved %d new issues, Updated %d existing issues", saved, updated), nil
+}
