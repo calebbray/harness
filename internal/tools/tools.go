@@ -110,6 +110,7 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 		)
 	}
 
+	connectMCPServers(r)
 	return r
 }
 
