@@ -25,3 +25,11 @@ func (mc *MockClient) Send(messages []Message, tools []tools.ToolDef) (*Response
 	mc.calls++
 	return r, nil
 }
+
+func (c *MockClient) Provider() string {
+	return "mock"
+}
+
+func (c *MockClient) Model() string {
+	return "mock"
+}

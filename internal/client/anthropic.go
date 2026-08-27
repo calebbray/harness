@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -23,14 +22,8 @@ type AnthropicClient struct {
 	model  string
 }
 
-// temporarily sending tools, maybe later this should be a property on the client. Not sure yet where that lives
 func (c *AnthropicClient) Send(msgs []Message, tools []tools.ToolDef) (*Response, error) {
-	body := request{
-		Model:     c.model,
-		MaxTokens: MaxTokenRequest,
-		Messages:  msgs,
-		Tools:     tools,
-	}
+	body := toAnthropicRequest(c.model, MaxTokenRequest, "", msgs, tools)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -64,171 +57,121 @@ func (c *AnthropicClient) Send(msgs []Message, tools []tools.ToolDef) (*Response
 		return nil, fmt.Errorf("%d - %s", res.StatusCode, string(data))
 	}
 
-	var r Response
+	var r anthropicResponse
 	if err = json.Unmarshal(data, &r); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal: %w", err)
 	}
 
-	return &r, nil
+	return fromAnthropicResponse(r), nil
 }
 
-type request struct {
-	Model     string          `json:"model"`
-	MaxTokens int             `json:"max_tokens"`
-	Messages  []Message       `json:"messages"`
-	Tools     []tools.ToolDef `json:"tools,omitempty"`
-	System    string          `json:"system,omitempty"`
+func (c *AnthropicClient) Provider() string {
+	return "anthropic"
 }
 
-type Message struct {
-	Role    string    `json:"role"`
-	Content []Content `json:"content"`
+func (c *AnthropicClient) Model() string {
+	return c.model
 }
 
-func (m Message) String() string {
+func (m anthropicMessage) String() string {
 	var out strings.Builder
 
 	for _, c := range m.Content {
-		switch v := c.(type) {
-		case TextContent:
-			out.WriteString(v.Text)
+		if c.Text != "" {
+			out.WriteString(c.Text)
 			out.WriteString("\n")
+
 		}
 	}
 
 	return out.String()
 }
 
-type Content interface {
-	Type() string
+func toAnthropicRequest(model string, maxTokens int, system string, messages []Message, tools []tools.ToolDef) anthropicRequest {
+	var out []anthropicMessage
+	for _, m := range messages {
+		var ac []anthropicContent
+		for _, c := range m.Content {
+			switch v := c.(type) {
+			case TextContent:
+				ac = append(ac, anthropicContent{Type: "text", Text: v.Text})
+			case ToolUseContent:
+				ac = append(ac, anthropicContent{Type: "tool_use", Id: v.Id, Name: v.Name, Input: v.Input})
+			case ToolResultContent:
+				ac = append(ac, anthropicContent{Type: "tool_result", ToolUseId: v.Id, Content: v.Content, IsError: v.IsError})
+			}
+		}
+		out = append(out, anthropicMessage{Role: m.Role, Content: ac})
+	}
+
+	anthropicTools := make([]anthropicToolDef, len(tools))
+	for i, t := range tools {
+		anthropicTools[i] = anthropicToolDef{Name: t.Name, Description: t.Description, Schema: t.Schema}
+	}
+	return anthropicRequest{Model: model, MaxTokens: maxTokens, System: system, Messages: out, Tools: anthropicTools}
 }
 
-type TextContent struct {
-	ContentType string `json:"type"`
-	Text        string `json:"text"`
+func fromAnthropicResponse(res anthropicResponse) *Response {
+	var content []Content
+	for _, c := range res.Content {
+		switch c.Type {
+		case "text":
+			content = append(content, TextContent{Text: c.Text})
+		case "tool_use":
+			content = append(content, ToolUseContent{Id: c.Id, Name: c.Name, Input: c.Input})
+		case "tool_result":
+			content = append(content, ToolResultContent{Id: c.ToolUseId, Content: c.Content, IsError: c.IsError})
+		}
+	}
+
+	return &Response{
+		Content:    content,
+		StopReason: res.StopReason,
+	}
 }
 
-func (TextContent) Type() string {
-	return "text"
+type anthropicRequest struct {
+	Model     string             `json:"model"`
+	MaxTokens int                `json:"max_tokens"`
+	Messages  []anthropicMessage `json:"messages"`
+	Tools     []anthropicToolDef `json:"tools,omitempty"`
+	System    string             `json:"system,omitempty"`
 }
 
-func (t TextContent) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.String("type", "text"),
-		slog.String("text", t.Text),
-	)
+type anthropicMessage struct {
+	Role    string             `json:"role"`
+	Content []anthropicContent `json:"content"`
 }
 
-type ToolUseContent struct {
-	ContentType string          `json:"type"`
-	Id          string          `json:"id"`
-	Name        string          `json:"name"`
-	Input       json.RawMessage `json:"input"`
-}
-
-func (ToolUseContent) Type() string {
-	return "tool_use"
-}
-
-func (t ToolUseContent) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.String("type", "tool_use"),
-		slog.String("id", t.Id),
-		slog.String("name", t.Name),
-		slog.String("input", string(t.Input)),
-	)
-}
-
-type ToolResultContent struct {
-	ContentType string `json:"type"`
-	Id          string `json:"tool_use_id"`
-	Content     string `json:"content"`
-	IsError     bool   `json:"is_error"`
-}
-
-func (ToolResultContent) Type() string {
-	return "tool_result"
-}
-
-func (t ToolResultContent) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.String("type", "tool_result"),
-		slog.String("tool_use_id", t.Id),
-		slog.Bool("is_error", t.IsError),
-	)
-}
-
-type Response struct {
-	Id         string    `json:"id"`
-	Model      string    `json:"model"`
-	Type       string    `json:"type"`
-	Role       string    `json:"role"`
-	StopReason string    `json:"stop_reason"`
-	Content    []Content `json:"content"`
+type anthropicResponse struct {
+	Id         string             `json:"id"`
+	Model      string             `json:"model"`
+	Type       string             `json:"type"`
+	Role       string             `json:"role"`
+	StopReason string             `json:"stop_reason"`
+	Content    []anthropicContent `json:"content"`
 	Usage      struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
-// custom unmarshaller for responses. Specifically handles the various content types
-func (r *Response) UnmarshalJSON(data []byte) error {
-	type Alias Response
-	a := struct {
-		Content []json.RawMessage `json:"content"`
-		*Alias
-	}{
-		Alias: (*Alias)(r),
-	}
-
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-
-	for _, raw := range a.Content {
-		var kind struct {
-			Type string `json:"type"`
-		}
-
-		if err := json.Unmarshal(raw, &kind); err != nil {
-			return err
-		}
-
-		switch kind.Type {
-		case "text":
-			var t TextContent
-			if err := json.Unmarshal(raw, &t); err != nil {
-				return err
-			}
-			r.Content = append(r.Content, t)
-
-		case "tool_use":
-			var t ToolUseContent
-			if err := json.Unmarshal(raw, &t); err != nil {
-				return err
-			}
-			r.Content = append(r.Content, t)
-
-		case "tool_result":
-			var t ToolResultContent
-			if err := json.Unmarshal(raw, &t); err != nil {
-				return err
-			}
-			r.Content = append(r.Content, t)
-
-		default:
-			return fmt.Errorf("unknown content type %q", kind.Type)
-		}
-	}
-
-	return nil
+type anthropicToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Schema      json.RawMessage `json:"input_schema"`
 }
 
-// type ToolDef struct {
-// 	Name        string          `json:"name"`
-// 	Description string          `json:"description"`
-// 	Schema      json.RawMessage `json:"input_schema"`
-// }
+type anthropicContent struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Id        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseId string          `json:"tool_use_id,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
+}
 
 type ApiError struct {
 	Error struct {

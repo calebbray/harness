@@ -98,7 +98,7 @@ func main() {
 	logger := slog.New(logging.NewFanout(fileHandler, stdoutHandler))
 	logger.Info("initialized agent log", "path", logPath)
 
-	c, err := client.New("anthropic")
+	c, err := client.New("openai", "")
 	if err != nil {
 		logger.Error("failed to create client", "err", err)
 	}

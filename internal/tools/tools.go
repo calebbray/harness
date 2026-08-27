@@ -89,7 +89,13 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 		true,
 	)
 
-	// TODO: add a time / calendar tool that doesn't have to run a bunch of bash commands
+	r.Register(
+		"get_date",
+		"get the current date in RFC3339 format.",
+		getDateSchema,
+		handleGetDate,
+		false,
+	)
 
 	jiraTools, err := jira.NewJiraTools(issueSaver)
 	if err == nil {
@@ -227,4 +233,14 @@ func handleWriteFile(input json.RawMessage) (string, error) {
 	}
 
 	return fmt.Sprintf("wrote %d bytes to %s", len(in.Contents), in.Path), nil
+}
+
+const getDateSchema = `{
+	"type": "object",
+	"properties": {},
+	"required": []
+}`
+
+func handleGetDate(input json.RawMessage) (string, error) {
+	return time.Now().Format(time.RFC3339), nil
 }

@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -80,6 +81,22 @@ func (jc *jiraClient) get(path string) ([]byte, error) {
 	}
 	defer res.Body.Close()
 
+	return io.ReadAll(res.Body)
+}
+
+func (jc *jiraClient) post(path string, body []byte) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodPost, jiraDomain+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(jc.user, jc.key)
+	req.Header.Set("content-type", "application/json")
+
+	res, err := jc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
 	return io.ReadAll(res.Body)
 }
 
@@ -343,4 +360,57 @@ func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) (string, error) 
 	}
 
 	return fmt.Sprintf("Saved %d new issues, Updated %d existing issues", saved, updated), nil
+}
+
+func (jc *jiraClient) searchIssuesJQL(jql string) ([]Issue, error) {
+	var allIssues []Issue
+	pageToken := ""
+
+	const maxPages = 50
+	for range maxPages {
+		body := jqlSearchRequest{JQL: jql, Fields: []string{"summary"}, MaxResults: 100}
+		if pageToken != "" {
+			body.NextPageToken = pageToken
+		}
+
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+
+		data, err := jc.post("/rest/api/3/search/jql", payload)
+		if err != nil {
+			return nil, err
+		}
+
+		var res jqlSearchResponse
+		if err = json.Unmarshal(data, &res); err != nil {
+			return nil, err
+		}
+		allIssues = append(allIssues, res.Issues...)
+
+		if res.IsLast {
+			return allIssues, nil
+		}
+
+		if res.NextPageToken == "" {
+			return allIssues, fmt.Errorf("pagination error: isLast == false but no next token")
+		}
+
+		pageToken = res.NextPageToken
+	}
+	return allIssues, fmt.Errorf("exceeded %d pages, stopping to avoid endless loop", maxPages)
+}
+
+type jqlSearchRequest struct {
+	JQL           string   `json:"jql"`
+	Fields        []string `json:"fields"`
+	MaxResults    int      `json:"maxResults,omitempty"`
+	NextPageToken string   `json:"nextPageToken,omitempty"`
+}
+
+type jqlSearchResponse struct {
+	Issues        []Issue `json:"issues"`
+	IsLast        bool    `json:"isLast"`
+	NextPageToken string  `json:"nextPageToken,omitempty"`
 }

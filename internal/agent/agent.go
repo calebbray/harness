@@ -33,6 +33,10 @@ func New(cfg AgentConfig) *Agent {
 	}
 }
 
+func (a *Agent) SetClient(c client.Client) {
+	a.Client = c
+}
+
 func (a *Agent) Result() string {
 	return a.lastResult
 }
