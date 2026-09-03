@@ -11,6 +11,7 @@ import (
 )
 
 const OpenAIURL = "https://api.openai.com/v1/responses"
+const OpenAIDefaultModel = "gpt-4o-mini"
 
 type OpenAIClient struct {
 	client *http.Client

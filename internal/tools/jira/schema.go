@@ -3,6 +3,7 @@ package jira
 import "time"
 
 type changelog struct {
+	Key       string `json:"key"`
 	Changelog struct {
 		Histories []struct {
 			Timestamp string `json:"created"`
@@ -73,23 +74,4 @@ func parseRFCTimestamp(stamp string) (time.Time, error) {
 type cycleTimeResponse struct {
 	Issues  map[string]string `json:"issues"`
 	Metrics metrics           `json:"metrics"`
-}
-
-type jiraIssueKey struct {
-	Key string `json:"key"`
-}
-
-type board struct {
-	Values []struct {
-		SprintUrl string `json:"self"`
-	} `json:"values"`
-}
-
-type sprint struct {
-	Issues []jiraIssueKey `json:"issues"`
-}
-
-type cycleReport struct {
-	Key       string
-	CycleTime time.Duration
 }

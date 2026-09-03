@@ -15,6 +15,22 @@ func TestJiraCycleTimeHandler(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestJiraSyncHandler(t *testing.T) {
+	jt, err := NewJiraTools(MockSaver{})
+	require.NoError(t, err)
+
+	// iss, err := jt.searchIssuesJQL(`project = API AND resolved >= -14d ORDER BY resolved ASC`)
+	// require.NoError(t, err)
+	//
+	// for _, i := range iss {
+	// 	t.Log(i.Key)
+	// }
+
+	result, err := jt.HandleJiraIssueSync(json.RawMessage(`{"query": "project = API AND resolved >= -14d ORDER BY resolved ASC"}`))
+	t.Log(result)
+	require.NoError(t, err)
+}
+
 type MockSaver struct{}
 
 func (MockSaver) SaveIssue(key, title string, loe int, teamId int, started_at, finished_at int64) error {

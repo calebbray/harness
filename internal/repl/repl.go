@@ -9,13 +9,15 @@ import (
 	"strings"
 
 	"github.com/calebbray/personal-agent/internal/agent"
+	"github.com/calebbray/personal-agent/internal/cli"
 	"github.com/calebbray/personal-agent/internal/client"
 	"github.com/calebbray/personal-agent/internal/workerpool"
 )
 
 type Repl struct {
 	ReplConfig
-	scanner *bufio.Scanner
+	scanner  *bufio.Scanner
+	commands Commands
 }
 
 type ReplConfig struct {
@@ -30,12 +32,15 @@ func New(cfg ReplConfig) *Repl {
 	r := &Repl{
 		ReplConfig: cfg,
 		scanner:    scanner,
+		commands:   make(Commands),
 	}
 
 	r.Agent.SetConfirmer(r.confirm)
 
 	return r
 }
+
+type Commands map[string]cli.Handler
 
 func (r *Repl) Run() error {
 	for {

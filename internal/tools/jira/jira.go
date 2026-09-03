@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -123,44 +122,6 @@ func (jc *jiraClient) fetchStatusCategories() (statusCategories, error) {
 	return categories, nil
 }
 
-func (jc *jiraClient) fetchSprintIssues(teamBoardName string) ([]jiraIssueKey, error) {
-	// for now I'm just having a simple switch, but will have a better implementation for this when we have some more caching
-	var boardId string
-	switch teamBoardName {
-	case "API":
-		boardId = "467"
-	case "ADR":
-		boardId = "6988"
-	case "APIENG":
-		boardId = "478"
-	}
-
-	data, err := jc.get(fmt.Sprintf("/rest/agile/1.0/board/%s/sprint?state=active", boardId))
-	if err != nil {
-		return nil, err
-	}
-
-	var b board
-	if err = json.Unmarshal(data, &b); err != nil {
-		return nil, err
-	}
-
-	if len(b.Values) == 0 {
-		return nil, fmt.Errorf("no active sprint for project")
-	}
-
-	data, err = jc.get(strings.TrimPrefix(b.Values[0].SprintUrl, jiraDomain) + "/issue")
-
-	if err != nil {
-		return nil, err
-	}
-	var s sprint
-	if err = json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	return s.Issues, nil
-}
-
 type Issue struct {
 	Key    string
 	TeamId int
@@ -169,46 +130,6 @@ type Issue struct {
 	Loe        *int
 	StartedAt  *int64
 	FinishedAt *int64
-}
-
-func (jt *JiraTools) getIssue(key string) (Issue, error) {
-	var i Issue
-	i.Key = key
-	parts := strings.Split(key, "-")
-	if len(parts) != 2 {
-		return i, fmt.Errorf("invalid key format. Expected {team}-{issue number}, got=%s", key)
-	}
-
-	data, err := jt.client.get(fmt.Sprintf("/rest/api/2/issue/%s?expand=changelog", key))
-	if err != nil {
-		return i, err
-	}
-
-	var cl changelog
-	if err = json.Unmarshal(data, &cl); err != nil {
-		return i, err
-	}
-	i.Title = cl.Fields.Title
-
-	if cl.Fields.Loe != nil {
-		v := int(*cl.Fields.Loe)
-		i.Loe = &v
-	}
-
-	if s, ok := cl.start(jt.categories); ok {
-		i.StartedAt = &s
-	}
-
-	if f, ok := cl.finish(jt.categories); ok {
-		i.FinishedAt = &f
-	}
-
-	i.TeamId, err = jt.store.GetTeamIdByName(parts[0])
-	if err != nil {
-		return i, fmt.Errorf("could not get id for team with name: %s (%s)", parts[0], err)
-	}
-
-	return i, nil
 }
 
 const JiraCycleTimeSchema = `{
@@ -318,14 +239,20 @@ const SyncIssueSchema = `{
 	"properties": {
 		"project": {
 			"type": "string",
-			"description": "identifier of the team that to pull issues for. Might be in stringified number, jira project label, or a stored alias of a team."
+			"description": "project name to query issues by"
+		},
+		"previousDays": {
+			"type": "number",
+			"description": "number of days to query issues for.",
+			"default": 14
 		}
 	},
-	"required": ["project"]
+	"required": ["project", "previousDays"]
 }`
 
 type jiraSyncIssuesInput struct {
 	Project string `json:"project"`
+	NumDays int    `json:"previousDays"`
 }
 
 func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) (string, error) {
@@ -338,20 +265,10 @@ func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) (string, error) 
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", err
 	}
-	keys, err := jt.client.fetchSprintIssues(in.Project)
+
+	issues, err := jt.searchIssuesJQL(in.Project, in.NumDays)
 	if err != nil {
 		return "", err
-	}
-
-	var issues []Issue
-	var errors []error
-	for _, key := range keys {
-		iss, err := jt.getIssue(key.Key)
-		if err != nil {
-			errors = append(errors, fmt.Errorf("could not get issue %s: %s", key.Key, err))
-			continue
-		}
-		issues = append(issues, iss)
 	}
 
 	saved, updated, err := jt.store.SaveIssues(issues)
@@ -362,13 +279,22 @@ func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) (string, error) 
 	return fmt.Sprintf("Saved %d new issues, Updated %d existing issues", saved, updated), nil
 }
 
-func (jc *jiraClient) searchIssuesJQL(jql string) ([]Issue, error) {
+func (jt *JiraTools) searchIssuesJQL(project string, numDays int) ([]Issue, error) {
 	var allIssues []Issue
 	pageToken := ""
 
+	teamId, err := jt.store.GetTeamIdByName(project)
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve team name for %q: %w", project, err)
+	}
 	const maxPages = 50
 	for range maxPages {
-		body := jqlSearchRequest{JQL: jql, Fields: []string{"summary"}, MaxResults: 100}
+		body := jqlSearchRequest{
+			JQL:        fmt.Sprintf("project = %s AND resolved >= -%dd ORDER BY resolved ASC", project, numDays),
+			Expand:     "changelog",
+			Fields:     []string{"summary", "customfield_10004"},
+			MaxResults: 100,
+		}
 		if pageToken != "" {
 			body.NextPageToken = pageToken
 		}
@@ -378,7 +304,7 @@ func (jc *jiraClient) searchIssuesJQL(jql string) ([]Issue, error) {
 			return nil, err
 		}
 
-		data, err := jc.post("/rest/api/3/search/jql", payload)
+		data, err := jt.client.post("/rest/api/3/search/jql", payload)
 		if err != nil {
 			return nil, err
 		}
@@ -387,7 +313,28 @@ func (jc *jiraClient) searchIssuesJQL(jql string) ([]Issue, error) {
 		if err = json.Unmarshal(data, &res); err != nil {
 			return nil, err
 		}
-		allIssues = append(allIssues, res.Issues...)
+
+		for _, jiraIssue := range res.Issues {
+			var iss Issue
+			iss.TeamId = teamId
+			iss.Title = jiraIssue.Fields.Title
+			iss.Key = jiraIssue.Key
+
+			if jiraIssue.Fields.Loe != nil {
+				v := int(*jiraIssue.Fields.Loe)
+				iss.Loe = &v
+			}
+
+			if s, ok := jiraIssue.start(jt.categories); ok {
+				iss.StartedAt = &s
+			}
+
+			if f, ok := jiraIssue.finish(jt.categories); ok {
+				iss.FinishedAt = &f
+			}
+
+			allIssues = append(allIssues, iss)
+		}
 
 		if res.IsLast {
 			return allIssues, nil
@@ -404,13 +351,14 @@ func (jc *jiraClient) searchIssuesJQL(jql string) ([]Issue, error) {
 
 type jqlSearchRequest struct {
 	JQL           string   `json:"jql"`
+	Expand        string   `json:"expand"`
 	Fields        []string `json:"fields"`
 	MaxResults    int      `json:"maxResults,omitempty"`
 	NextPageToken string   `json:"nextPageToken,omitempty"`
 }
 
 type jqlSearchResponse struct {
-	Issues        []Issue `json:"issues"`
-	IsLast        bool    `json:"isLast"`
-	NextPageToken string  `json:"nextPageToken,omitempty"`
+	Issues        []changelog `json:"issues"`
+	IsLast        bool        `json:"isLast"`
+	NextPageToken string      `json:"nextPageToken,omitempty"`
 }

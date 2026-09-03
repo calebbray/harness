@@ -38,6 +38,10 @@ type Response struct {
 	StopReason string
 }
 
+func Default() (Client, error) {
+	return New("openai", OpenAIDefaultModel)
+}
+
 func New(provider, model string) (Client, error) {
 	switch provider {
 	case "anthropic":
