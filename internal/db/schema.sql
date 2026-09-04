@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS issues(
     started_at INTEGER,
     finished_at INTEGER,
     team_id INTEGER REFERENCES teams(id) NOT NULL,
+    issue_type TEXT,
     updated_at INTEGER DEFAULT (unixepoch())
 );
 

@@ -17,8 +17,11 @@ type changelog struct {
 		} `json:"histories"`
 	} `json:"changelog"`
 	Fields struct {
-		Title string   `json:"summary"`
-		Loe   *float64 `json:"customfield_10004"`
+		Title     string   `json:"summary"`
+		Loe       *float64 `json:"customfield_10004"`
+		IssueType struct {
+			Name string `json:"name"`
+		} `json:"issuetype"`
 	} `json:"fields"`
 }
 

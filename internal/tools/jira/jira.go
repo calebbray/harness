@@ -130,55 +130,47 @@ type Issue struct {
 	Loe        *int
 	StartedAt  *int64
 	FinishedAt *int64
+	IssueType  string
 }
 
 const JiraCycleTimeSchema = `{
 	"type": "object",
 	"properties": {
 		"project": {"type": "string", "description": "project id to use"},
-		"start_date": {"type": "string", "description": "Lower bound, RFC3339, e.g. \"2026-08-08T16:13:05Z\". Defaults to 2 weeks before end_date (or now)."},
-		"end_date": {"type": "string", "description": "Upper bound, RFC3339, e.g. \"2026-08-08T16:13:05Z\". Defaults to now, or 2 weeks after start_date if only start_date is given."}
+		"start_date": {"type": "string", "description": "ONLY set this if the user gave an explicit calendar date (e.g. \"cycle time for March\"). RFC3339, e.g. \"2026-08-08T16:13:05Z\". Do not compute or guess this value - if the user didn't give a literal date, leave this and end_date unset and use end_days_ago/duration_days instead."},
+		"end_date": {"type": "string", "description": "ONLY set this if the user gave an explicit calendar date. RFC3339, e.g. \"2026-08-08T16:13:05Z\". Do not compute or guess this value."},
+		"end_days_ago": {"type": "integer", "description": "How many days before today the window should END. 0 means the window ends today. Use this (not end_date) for relative requests like 'the last two weeks' or 'two weeks starting 30 days ago'. Defaults to 0."},
+		"duration_days": {"type": "integer", "description": "Width of the window in days, counting backward from end_days_ago. Defaults to 14."}
 	},
 	"required": ["project"]
 }`
 
 type jiraCycleTimeInput struct {
-	Project   string `json:"project"`
-	StartDate string `json:"start_date"`
-	EndDate   string `json:"end_date"`
+	Project      string `json:"project"`
+	StartDate    string `json:"start_date,omitempty"`
+	EndDate      string `json:"end_date,omitempty"`
+	EndDaysAgo   int    `json:"end_days_ago,omitempty"`
+	DurationDays int    `json:"duration_days,omitempty"`
 }
 
-// TODO: realistically this belongs in some kind of utility package but for now it lives in jira
-func resolveWindow(startStr, endStr string) (start, end time.Time, err error) {
-	if startStr != "" && endStr != "" {
-		start, err = parseRFCTimestamp(startStr)
+func resolveWindow(input jiraCycleTimeInput) (start, end time.Time, err error) {
+	if input.StartDate != "" && input.EndDate != "" {
+		start, err = parseRFCTimestamp(input.StartDate)
 		if err != nil {
 			return start, end, err
 		}
-		end, err = parseRFCTimestamp(endStr)
+		end, err = parseRFCTimestamp(input.EndDate)
 		return start, end, err
 	}
 
-	if startStr == "" && endStr == "" {
-		end = time.Now()
-		start = end.AddDate(0, 0, -14)
-		return start, end, nil
+	duration := input.DurationDays
+	if duration <= 0 {
+		duration = 14
 	}
 
-	if startStr == "" {
-		end, err = parseRFCTimestamp(endStr)
-		if err != nil {
-			return start, end, err
-		}
-		start = end.AddDate(0, 0, -14)
-		return start, end, nil
-	}
+	end = time.Now().AddDate(0, 0, -input.EndDaysAgo)
+	start = end.AddDate(0, 0, -duration)
 
-	start, err = parseRFCTimestamp(startStr)
-	if err != nil {
-		return start, end, err
-	}
-	end = start.AddDate(0, 0, 14)
 	return start, end, nil
 }
 
@@ -193,7 +185,7 @@ func (jt *JiraTools) HandleCycleTimeStatistics(input json.RawMessage) (string, e
 		return "", err
 	}
 
-	start, end, err := resolveWindow(in.StartDate, in.EndDate)
+	start, end, err := resolveWindow(in)
 	if err != nil {
 		return "", err
 	}
@@ -279,6 +271,98 @@ func (jt *JiraTools) HandleJiraIssueSync(input json.RawMessage) (string, error) 
 	return fmt.Sprintf("Saved %d new issues, Updated %d existing issues", saved, updated), nil
 }
 
+const JiraCycleTimeTrendSchema = `{
+	"type": "object",
+	"properties": {
+		"project": {"type": "string", "description": "project id to use"},
+		"periods": {"type": "integer", "description": "how many consecutive windows to compute, walking backward from today. e.g. 26 for a year of 2-week blocks."},
+		"duration_days": {"type": "integer", "description": "width of each window in days. Defaults to 14."}
+	},
+	"required": ["project", "periods"]
+}`
+
+type jiraCycleTimeTrendInput struct {
+	Project      string `json:"project"`
+	Periods      int    `json:"periods"`
+	DurationDays int    `json:"duration_days,omitempty"`
+}
+
+type trendWindow struct {
+	Start   string  `json:"start"`
+	End     string  `json:"end"`
+	Metrics metrics `json:"metrics"`
+	Count   int     `json:"issue_count"`
+}
+
+func (jt *JiraTools) HandleCycleTimeTrend(input json.RawMessage) (string, error) {
+	if err := jt.getCategories(); err != nil {
+		return "", err
+	}
+
+	var in jiraCycleTimeTrendInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return "", err
+	}
+
+	duration := in.DurationDays
+	if duration <= 0 {
+		duration = 14
+	}
+
+	if in.Periods <= 0 || in.Periods > 104 {
+		return "", fmt.Errorf("periods must be between 1 and 104. Two year max.")
+	}
+
+	teamId, err := jt.store.GetTeamIdByName(in.Project)
+	if err != nil {
+		return "", err
+	}
+
+	windows := make([]trendWindow, 0, in.Periods)
+	end := time.Now()
+
+	for range in.Periods {
+		start := end.AddDate(0, 0, -duration)
+
+		issues, err := jt.store.GetIssuesFinishedInTimeframe(teamId, start.Unix(), end.Unix())
+		if err != nil {
+			return "", err
+		}
+
+		mets := make(cycleData)
+		for _, iss := range issues {
+			if iss.FinishedAt == nil || iss.StartedAt == nil {
+				continue
+			}
+			mets[iss.Key] = time.Duration(*iss.FinishedAt-*iss.StartedAt) * time.Second
+		}
+
+		windows = append(windows, trendWindow{
+			Start: start.Format(time.RFC3339),
+			End:   end.Format(time.RFC3339),
+			Count: len(mets),
+			Metrics: metrics{
+				Average:      mets.Avg().String(),
+				Median:       mets.Median().String(),
+				Percentile25: mets.Percentile(25).String(),
+				Percentile75: mets.Percentile(75).String(),
+			},
+		})
+
+		end = start
+	}
+
+	data, err := json.Marshal(struct {
+		Project string        `json:"project"`
+		Windows []trendWindow `json:"windows"`
+	}{Project: in.Project, Windows: windows})
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}
+
 func (jt *JiraTools) searchIssuesJQL(project string, numDays int) ([]Issue, error) {
 	var allIssues []Issue
 	pageToken := ""
@@ -292,7 +376,7 @@ func (jt *JiraTools) searchIssuesJQL(project string, numDays int) ([]Issue, erro
 		body := jqlSearchRequest{
 			JQL:        fmt.Sprintf("project = %s AND resolved >= -%dd ORDER BY resolved ASC", project, numDays),
 			Expand:     "changelog",
-			Fields:     []string{"summary", "customfield_10004"},
+			Fields:     []string{"summary", "customfield_10004", "issuetype"},
 			MaxResults: 100,
 		}
 		if pageToken != "" {
@@ -319,6 +403,7 @@ func (jt *JiraTools) searchIssuesJQL(project string, numDays int) ([]Issue, erro
 			iss.TeamId = teamId
 			iss.Title = jiraIssue.Fields.Title
 			iss.Key = jiraIssue.Key
+			iss.IssueType = jiraIssue.Fields.IssueType.Name
 
 			if jiraIssue.Fields.Loe != nil {
 				v := int(*jiraIssue.Fields.Loe)

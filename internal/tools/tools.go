@@ -101,7 +101,7 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 	if err == nil {
 		r.Register(
 			"jira_cycle_time",
-			"get cycle time statistics for a jira project over a particular time frame. Defaults to the last two weeks",
+			"get cycle time statistics for a jira project over a particular time frame. Defaults to the last two weeks. For start_date and end_date, do not provide any values if the user doesn't specify them.",
 			jira.JiraCycleTimeSchema,
 			jiraTools.HandleCycleTimeStatistics,
 			false,
@@ -114,9 +114,17 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 			jiraTools.HandleJiraIssueSync,
 			false,
 		)
+
+		r.Register(
+			"jira_cycle_time_trend",
+			"get cycle times for a jira project in a given time frame window, rolling over a time frame.",
+			jira.JiraCycleTimeTrendSchema,
+			jiraTools.HandleCycleTimeTrend,
+			false,
+		)
 	}
 
-	// connectMCPServers(r)
+	connectMCPServers(r)
 	return r
 }
 

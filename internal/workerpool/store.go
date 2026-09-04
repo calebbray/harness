@@ -144,7 +144,11 @@ func (s *Store) GetIssuesFinishedInTimeframe(teamId int, start, end int64) ([]ji
 	rows, err := s.db.Query(
 		`SELECT issue_key, title, loe, started_at, finished_at 
 		FROM issues 
-		WHERE team_id = ? AND finished_at BETWEEN ? AND ?`,
+		WHERE team_id = ? 
+		AND finished_at BETWEEN ? AND ?
+		AND loe IS NOT NULL
+		AND finished_at > started_at
+		AND issue_type != 'Epic'`,
 		teamId, start, end,
 	)
 	if err != nil {
@@ -179,20 +183,21 @@ func (s *Store) SaveIssues(issues []jira.Issue) (saved, updated int, err error) 
 	}
 
 	var sb strings.Builder
-	sb.WriteString(`INSERT INTO issues (issue_key, title, loe, team_id, started_at, finished_at, updated_at) VALUES `)
-	args := make([]any, 0, len(issues)*6)
+	sb.WriteString(`INSERT INTO issues (issue_key, title, loe, issue_type, team_id, started_at, finished_at, updated_at) VALUES `)
+	args := make([]any, 0, len(issues)*7)
 	for i, iss := range issues {
 		if i > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString("(?, ?, ?, ?, ?, ?, unixepoch())")
-		args = append(args, iss.Key, iss.Title, iss.Loe, iss.TeamId, iss.StartedAt, iss.FinishedAt)
+		sb.WriteString("(?, ?, ?, ?, ?, ?, ?, unixepoch())")
+		args = append(args, iss.Key, iss.Title, iss.Loe, iss.IssueType, iss.TeamId, iss.StartedAt, iss.FinishedAt)
 	}
 	sb.WriteString(`
 		ON CONFLICT(issue_key) DO UPDATE SET
 			title       = excluded.title,
 			loe         = excluded.loe,
 			team_id     = excluded.team_id,
+			issue_type  = excluded.issue_type,
 			started_at  = COALESCE(issues.started_at, excluded.started_at),
 			finished_at = COALESCE(issues.finished_at, excluded.finished_at),
 			updated_at  = unixepoch()
