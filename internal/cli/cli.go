@@ -1,21 +1,20 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/calebbray/personal-agent/internal/agent"
+	"github.com/calebbray/personal-agent/internal/command"
+	"github.com/calebbray/personal-agent/internal/handlers"
 	"github.com/calebbray/personal-agent/internal/workerpool"
 )
 
-type Handler func(*Args) error
-
 type Cli struct {
 	Config
-	handlers map[string]Handler
-	agent    *agent.Agent
-	store    *workerpool.Store
+	*command.Registry
+	agent *agent.Agent
+	store *workerpool.Store
 }
 
 type Config struct {
@@ -23,39 +22,20 @@ type Config struct {
 	Store *workerpool.Store
 }
 
-type Args struct {
-	Positional []string
-	Flags      map[string]string
-	Booleans   map[string]bool
-}
-
 func New(cfg Config) *Cli {
-	cli := &Cli{
-		handlers: make(map[string]Handler),
+	reg := command.NewRegistry()
+	reg.Register("--help", handlers.PromptHelp("harness: a help guide"))
+	reg.Register("-q", handlers.Query(cfg.Agent))
+	reg.Register("/tasks", handlers.ListTasks(cfg.Store))
+	return &Cli{
+		Registry: reg,
 		agent:    cfg.Agent,
 		store:    cfg.Store,
 	}
-	cli.Register("--help", helpHandler)
-	cli.Register("-q", cli.queryHandler)
-	cli.Register("/tasks", cli.listTasksHandler)
-
-	return cli
 }
 
-func newArgs() *Args {
-	return &Args{
-		Positional: []string{},
-		Flags:      make(map[string]string),
-		Booleans:   make(map[string]bool),
-	}
-}
-
-func (c *Cli) Register(name string, h Handler) {
-	c.handlers[name] = h
-}
-
-func ParseArgs(args []string) (*Args, error) {
-	a := newArgs()
+func ParseArgs(args []string) (*command.Args, error) {
+	a := command.NewArgs()
 	for _, arg := range args {
 		if isPositional(arg) {
 			a.Positional = append(a.Positional, arg)
@@ -63,30 +43,24 @@ func ParseArgs(args []string) (*Args, error) {
 		}
 
 		if isFlag(arg) {
-			if err := a.parseFlag(arg); err != nil {
+			flag, value, err := parseFlag(arg)
+			if err != nil {
 				return a, err
 			}
+			a.Flags[flag] = value
 			continue
 		}
 
 		if isBool(arg) {
-			if err := a.parseBool(arg); err != nil {
+			b, err := parseBool(arg)
+			if err != nil {
 				return a, err
 			}
+			a.Booleans[b] = true
 			continue
 		}
 	}
 	return a, nil
-}
-
-var ErrCmdNotFound = errors.New("command not found")
-
-func (c *Cli) Run(cmd string, args *Args) error {
-	f, ok := c.handlers[cmd]
-	if !ok {
-		return ErrCmdNotFound
-	}
-	return f(args)
 }
 
 func isPositional(input string) bool {
@@ -101,18 +75,17 @@ func isBool(input string) bool {
 	return strings.HasPrefix(input, "--") && !strings.Contains(input, "=")
 }
 
-func (a *Args) parseFlag(input string) error {
+func parseFlag(input string) (flag, value string, err error) {
 	parts := strings.Split(input, "=")
 	if len(parts) != 2 {
-		return fmt.Errorf("invalid flag: %s", input)
+		return "", "", fmt.Errorf("invalid flag: %s", input)
 	}
-	key, _ := strings.CutPrefix(parts[0], "--")
-	a.Flags[key] = parts[1]
-	return nil
+	flag, _ = strings.CutPrefix(parts[0], "--")
+	value = parts[1]
+	return flag, value, nil
 }
 
-func (a *Args) parseBool(input string) error {
+func parseBool(input string) (string, error) {
 	key, _ := strings.CutPrefix(input, "--")
-	a.Booleans[key] = true
-	return nil
+	return key, nil
 }

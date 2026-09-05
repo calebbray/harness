@@ -9,15 +9,16 @@ import (
 	"strings"
 
 	"github.com/calebbray/personal-agent/internal/agent"
-	"github.com/calebbray/personal-agent/internal/cli"
 	"github.com/calebbray/personal-agent/internal/client"
+	"github.com/calebbray/personal-agent/internal/command"
+	"github.com/calebbray/personal-agent/internal/handlers"
 	"github.com/calebbray/personal-agent/internal/workerpool"
 )
 
 type Repl struct {
 	ReplConfig
 	scanner  *bufio.Scanner
-	commands Commands
+	commands *command.Registry
 }
 
 type ReplConfig struct {
@@ -28,19 +29,45 @@ type ReplConfig struct {
 }
 
 func New(cfg ReplConfig) *Repl {
-	scanner := bufio.NewScanner(os.Stdin)
 	r := &Repl{
 		ReplConfig: cfg,
-		scanner:    scanner,
-		commands:   make(Commands),
+		scanner:    bufio.NewScanner(os.Stdin),
 	}
 
+	reg := command.NewRegistry()
+	reg.Register("/tasks", handlers.ListTasks(cfg.Store))
+	reg.Register("/task", handlers.SubmitTask(cfg.WorkerPool))
+	reg.Register("/provider", r.handleProvider)
+	reg.Register("/model", r.handleModel)
+	reg.Register("/exit", r.handleExit)
+
+	r.commands = reg
 	r.Agent.SetConfirmer(r.confirm)
 
 	return r
 }
 
-type Commands map[string]cli.Handler
+func (r *Repl) handleExit(*command.Args) error {
+	return nil
+}
+
+func isCommand(input string) bool {
+	return strings.HasPrefix(input, "/")
+}
+func (r *Repl) getCommand(input string) (command.Handler, *command.Args, bool) {
+	if !strings.HasPrefix(input, "/") {
+		return nil, nil, false
+	}
+
+	cmd, argString, _ := strings.Cut(input, " ")
+	h, ok := r.commands.Get(cmd)
+	if !ok {
+		return nil, nil, false
+	}
+	args := &command.Args{Positional: []string{argString}}
+
+	return h, args, true
+}
 
 func (r *Repl) Run() error {
 	for {
@@ -56,64 +83,45 @@ func (r *Repl) Run() error {
 			continue
 		}
 
-		switch {
-		case line == "exit":
-			return nil
-		case strings.HasPrefix(line, "/task "):
-			instruction := strings.TrimPrefix(line, "/task ")
-			task, err := r.WorkerPool.Submit(instruction)
-			if err != nil {
-				fmt.Printf("couldn't submit job for processing %s", err)
+		if isCommand(line) {
+			f, args, ok := r.getCommand(line)
+			if !ok {
+				badCommand, _, _ := strings.Cut(line, " ")
+				r.Logger.Error("not a valid command", "invalid command", badCommand)
 			}
-			fmt.Printf("queued job #%d\n", task.Job.Id)
-		case line == "/tasks":
-			jobs, err := r.Store.GetJobs()
-			if err != nil {
-				fmt.Printf("failed to fetch jobs")
-				continue
+			if err := f(args); err != nil {
+				r.Logger.Error("error executing command", "err", err)
 			}
-			for _, j := range jobs {
-				status, result := j.Snapshot()
-				fmt.Printf("#%d [%s] %s -> %q\n", j.Id, status, j.Instruction, result)
-			}
-		case strings.HasPrefix(line, "/provider"):
-			arg := strings.TrimSpace(strings.TrimPrefix(line, "/provider"))
-			if arg == "" {
-				fmt.Printf("provider: %s, model: %s\n", r.Agent.Client.Provider(), r.Agent.Client.Model())
-				continue
-			}
-			newClient, err := client.New(arg, "")
-			if err != nil {
-				fmt.Println("failed to switch provider:", err)
-				continue
-			}
-			r.Agent.SetClient(newClient)
-			fmt.Printf("switched to %s (model: %s)\n", newClient.Provider(), newClient.Model())
 			continue
-		case strings.HasPrefix(line, "/model"):
-			arg := strings.TrimSpace(strings.TrimPrefix(line, "/model"))
-			if arg == "" {
-				fmt.Printf("model: %s\n", r.Agent.Client.Model())
-				continue
-			}
-			newClient, err := client.New(r.Agent.Client.Provider(), arg)
-			if err != nil {
-				fmt.Println("failed to switch model:", err)
-				continue
-			}
-			r.Agent.SetClient(newClient)
-			fmt.Printf("switched to model: %s\n", newClient.Model())
-			continue
-		default:
-			if err := r.Agent.Step(line); err != nil {
-				r.Logger.Error("step error", "error", err)
-				continue
-			}
-
-			fmt.Println(r.Agent.Result())
 		}
 
+		if err := r.Agent.Step(line); err != nil {
+			r.Logger.Error("step error", "error", err)
+			continue
+		}
+
+		fmt.Println(r.Agent.Result())
 	}
+	return nil
+}
+
+func (r *Repl) handleProvider(a *command.Args) error {
+	newClient, err := client.New(a.Positional[0], "")
+	if err != nil {
+		return fmt.Errorf("failed to switch provider: %w", err)
+	}
+	r.Agent.SetClient(newClient)
+	fmt.Printf("switched to %s (model: %s)\n", newClient.Provider(), newClient.Model())
+	return nil
+}
+
+func (r *Repl) handleModel(a *command.Args) error {
+	newClient, err := client.New(r.Agent.Client.Provider(), a.Positional[0])
+	if err != nil {
+		return fmt.Errorf("failed to switch model: %w", err)
+	}
+	r.Agent.SetClient(newClient)
+	fmt.Printf("switched to model: %s\n", newClient.Model())
 	return nil
 }
 
