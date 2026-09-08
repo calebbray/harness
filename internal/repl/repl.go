@@ -3,6 +3,7 @@ package repl
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -48,7 +49,7 @@ func New(cfg ReplConfig) *Repl {
 }
 
 func (r *Repl) handleExit(*command.Args) error {
-	return nil
+	return command.ErrExit
 }
 
 func isCommand(input string) bool {
@@ -59,13 +60,15 @@ func (r *Repl) getCommand(input string) (command.Handler, *command.Args, bool) {
 		return nil, nil, false
 	}
 
-	cmd, argString, _ := strings.Cut(input, " ")
+	cmd, argString, found := strings.Cut(input, " ")
 	h, ok := r.commands.Get(cmd)
 	if !ok {
 		return nil, nil, false
 	}
-	args := &command.Args{Positional: []string{argString}}
-
+	args := command.NewArgs()
+	if found && argString != "" {
+		args.Positional = []string{argString}
+	}
 	return h, args, true
 }
 
@@ -88,8 +91,12 @@ func (r *Repl) Run() error {
 			if !ok {
 				badCommand, _, _ := strings.Cut(line, " ")
 				r.Logger.Error("not a valid command", "invalid command", badCommand)
+				continue
 			}
 			if err := f(args); err != nil {
+				if errors.Is(err, command.ErrExit) {
+					return nil
+				}
 				r.Logger.Error("error executing command", "err", err)
 			}
 			continue

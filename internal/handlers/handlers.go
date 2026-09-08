@@ -41,7 +41,7 @@ func SubmitTask(pool *workerpool.WorkerPool) command.Handler {
 func Query(agent *agent.Agent) command.Handler {
 	return func(a *command.Args) error {
 		if len(a.Positional) == 0 {
-			return fmt.Errorf("usage: /query \"<instruction>\"")
+			return fmt.Errorf("usage: -q \"<instruction>\"")
 		}
 		if err := agent.Step(a.Positional[0]); err != nil {
 			return fmt.Errorf("step error %w", err)

@@ -43,6 +43,7 @@ func (r *Registry) Get(name string) (Handler, bool) {
 }
 
 var ErrCmdNotFound = errors.New("command not found")
+var ErrExit = errors.New("exit requested")
 
 func (r *Registry) Run(cmd string, args *Args) error {
 	f, ok := r.handlers[cmd]
