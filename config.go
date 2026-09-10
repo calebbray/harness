@@ -145,7 +145,7 @@ func findProjectRulesPath() (string, error) {
 	start := dir
 	for {
 		candidate := filepath.Join(dir, ".harness", "rules.json")
-		if _, err := os.Stat(candidate); err != nil {
+		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}
 		parent := filepath.Dir(dir)

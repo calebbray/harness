@@ -38,6 +38,7 @@ func New(cfg AgentConfig) *Agent {
 func (a *Agent) dispatchTool(v client.ToolUseContent) client.ToolResultContent {
 	if a.Tools.RequiresConfirmation(v.Name) {
 		action := a.RulePolicy.Resolve(v.Name, v.Input)
+		a.Logger.Debug("resolved rule action", "tool", v.Name, "input", string(v.Input), "action", action)
 
 		if action == permissions.ActionDeny {
 			return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: "denied by rule policy", IsError: true}
@@ -48,11 +49,11 @@ func (a *Agent) dispatchTool(v client.ToolUseContent) client.ToolResultContent {
 			case DenyOnce:
 				return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: "user declined to run this tool", IsError: true}
 			case AlwaysDenyProject:
-				a.RulePolicy.AddRule(permissions.ScopeProject, v.Name, string(v.Input), permissions.ActionDeny)
+				a.RulePolicy.AddRule(permissions.ScopeProject, v.Name, permissions.MatchToolCategory(v.Name, v.Input), permissions.ActionDeny)
 				return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: "user declined to run this tool", IsError: true}
 			case AllowOnce:
 			case AlwaysAllowProject:
-				a.RulePolicy.AddRule(permissions.ScopeProject, v.Name, string(v.Input), permissions.ActionAllow)
+				a.RulePolicy.AddRule(permissions.ScopeProject, v.Name, permissions.MatchToolCategory(v.Name, v.Input), permissions.ActionAllow)
 			}
 		}
 	}
