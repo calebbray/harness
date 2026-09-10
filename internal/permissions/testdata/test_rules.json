@@ -1,0 +1,22 @@
+[
+    {
+        "tool": "bash",
+        "match": "git status",
+        "action": "allow"
+    },
+    {
+        "tool": "bash",
+        "match": "git diff",
+        "action": "allow"
+    },
+    {
+        "tool": "bash",
+        "match": "git log",
+        "action": "allow"
+    },
+    {
+        "tool": "bash",
+        "match": "rm -rf",
+        "action": "deny"
+    }
+]

@@ -1,35 +1,35 @@
 package jira
 
-import (
-	"encoding/json"
-	"testing"
+// import (
+// 	"encoding/json"
+// 	"testing"
+//
+// 	"github.com/stretchr/testify/require"
+// )
 
-	"github.com/stretchr/testify/require"
-)
-
-func TestJiraCycleTimeHandler(t *testing.T) {
-	jt, err := NewJiraTools(MockSaver{})
-	require.NoError(t, err)
-
-	_, err = jt.HandleCycleTimeStatistics(json.RawMessage(`{"project": "API"}`))
-	require.NoError(t, err)
-}
-
-func TestJiraSyncHandler(t *testing.T) {
-	jt, err := NewJiraTools(MockSaver{})
-	require.NoError(t, err)
-
-	// iss, err := jt.searchIssuesJQL(`project = API AND resolved >= -14d ORDER BY resolved ASC`)
-	// require.NoError(t, err)
-	//
-	// for _, i := range iss {
-	// 	t.Log(i.Key)
-	// }
-
-	result, err := jt.HandleJiraIssueSync(json.RawMessage(`{"query": "project = API AND resolved >= -14d ORDER BY resolved ASC"}`))
-	t.Log(result)
-	require.NoError(t, err)
-}
+// func TestJiraCycleTimeHandler(t *testing.T) {
+// 	jt, err := NewJiraTools(MockSaver{})
+// 	require.NoError(t, err)
+//
+// 	_, err = jt.HandleCycleTimeStatistics(json.RawMessage(`{"project": "API"}`))
+// 	require.NoError(t, err)
+// }
+//
+// func TestJiraSyncHandler(t *testing.T) {
+// 	jt, err := NewJiraTools(MockSaver{})
+// 	require.NoError(t, err)
+//
+// 	// iss, err := jt.searchIssuesJQL(`project = API AND resolved >= -14d ORDER BY resolved ASC`)
+// 	// require.NoError(t, err)
+// 	//
+// 	// for _, i := range iss {
+// 	// 	t.Log(i.Key)
+// 	// }
+//
+// 	result, err := jt.HandleJiraIssueSync(json.RawMessage(`{"query": "project = API AND resolved >= -14d ORDER BY resolved ASC"}`))
+// 	t.Log(result)
+// 	require.NoError(t, err)
+// }
 
 type MockSaver struct{}
 

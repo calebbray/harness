@@ -7,13 +7,14 @@ import (
 	"log/slog"
 
 	"github.com/calebbray/personal-agent/internal/client"
+	"github.com/calebbray/personal-agent/internal/permissions"
 	"github.com/calebbray/personal-agent/internal/tools"
 )
 
 type Agent struct {
 	AgentConfig
-	history    []client.Message
-	confirmer  Confirmer
+	history []client.Message
+	// confirmer  Confirmer
 	lastResult string
 }
 
@@ -23,14 +24,42 @@ type AgentConfig struct {
 	EnforceConfirmation bool
 	Logger              *slog.Logger
 	Database            *sql.DB
+	RulePolicy          *permissions.RulePolicy
+	Confirmer           Confirmer
 }
 
 func New(cfg AgentConfig) *Agent {
 	return &Agent{
 		AgentConfig: cfg,
 		history:     make([]client.Message, 0),
-		confirmer:   DefaultConfirmer(cfg.EnforceConfirmation),
 	}
+}
+
+func (a *Agent) dispatchTool(v client.ToolUseContent) client.ToolResultContent {
+	if a.Tools.RequiresConfirmation(v.Name) {
+		action := a.RulePolicy.Resolve(v.Name, v.Input)
+
+		if action == permissions.ActionDeny {
+			return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: "denied by rule policy", IsError: true}
+		}
+
+		if action == permissions.ActionConfirm {
+			switch a.Confirmer(v.Name, v.Input) {
+			case DenyOnce:
+				return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: "user declined to run this tool", IsError: true}
+			case AlwaysDenyProject:
+				a.RulePolicy.AddRule(permissions.ScopeProject, v.Name, string(v.Input), permissions.ActionDeny)
+				return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: "user declined to run this tool", IsError: true}
+			case AllowOnce:
+			case AlwaysAllowProject:
+				a.RulePolicy.AddRule(permissions.ScopeProject, v.Name, string(v.Input), permissions.ActionAllow)
+			}
+		}
+	}
+
+	result, isError := a.Tools.Dispatch(v.Name, v.Input)
+	a.Logger.Debug("[executed]", "id", v.Id, "content", truncate(result, 200), "isError", isError)
+	return client.ToolResultContent{ContentType: "tool_result", Id: v.Id, Content: result, IsError: isError}
 }
 
 func (a *Agent) SetClient(c client.Client) {
@@ -75,7 +104,6 @@ func (a *Agent) step() (bool, error) {
 		a.history = append(a.history, client.Message{Role: "assistant", Content: res.Content})
 		for _, content := range res.Content {
 			if t, ok := content.(client.TextContent); ok {
-				// fmt.Println(t.Text)
 				a.lastResult = t.Text
 			}
 		}
@@ -84,38 +112,14 @@ func (a *Agent) step() (bool, error) {
 
 	var results []client.Content
 	for _, content := range res.Content {
-		var result string
-		var isError bool
 		v, ok := content.(client.ToolUseContent)
 		if !ok {
 			continue
 		}
 
-		if a.Tools.RequiresConfirmation(v.Name) {
-			if a.confirmer(v.Name, v.Input) {
-				result, isError = a.Tools.Dispatch(v.Name, v.Input)
-			} else {
-				results = append(results, client.ToolResultContent{
-					ContentType: "tool_result",
-					Id:          v.Id,
-					Content:     "user declined to run this tool",
-					IsError:     true,
-				})
-				continue
-			}
-		} else {
-			result, isError = a.Tools.Dispatch(v.Name, v.Input)
-		}
-
-		a.Logger.Debug("[executed]", "id", v.Id, "content", truncate(result, 200), "isError", isError)
-
-		results = append(results, client.ToolResultContent{
-			ContentType: "tool_result",
-			Id:          v.Id,
-			Content:     result,
-			IsError:     isError,
-		})
+		results = append(results, a.dispatchTool(v))
 	}
+
 	a.history = append(a.history,
 		client.Message{Role: "assistant", Content: res.Content},
 		client.Message{Role: "user", Content: results},
@@ -136,7 +140,7 @@ func (a *Agent) appendUserMessage(userInput string) {
 }
 
 func (a *Agent) SetConfirmer(confirmer Confirmer) {
-	a.confirmer = confirmer
+	a.Confirmer = confirmer
 }
 
 // basic DefaultConfirmer to either allow or disallow all commands

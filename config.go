@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/calebbray/personal-agent/internal/db"
 	"github.com/calebbray/personal-agent/internal/logging"
+	"github.com/calebbray/personal-agent/internal/permissions"
 )
 
 var version = "dev"
@@ -98,29 +100,58 @@ type Logger struct {
 	*slog.Logger
 }
 
-func initialize() (*Logger, *sql.DB, error) {
+func initialize() (*Logger, *sql.DB, *permissions.RulePolicy, error) {
 	dir, err := dataDir()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to resolve data directory: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to resolve data directory: %w", err)
 	}
 
 	if err := loadEnv(path.Join(dir, ".env")); err != nil {
-		return nil, nil, fmt.Errorf("failed to load env: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to load env: %w", err)
 	}
 
 	logger, err := setupLogger(dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("logger setup: %w", err)
+		return nil, nil, nil, fmt.Errorf("logger setup: %w", err)
 	}
 
 	database, err := setupDB(dir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("db setup: %w", err)
+		return nil, nil, nil, fmt.Errorf("db setup: %w", err)
 	}
 
 	if err := db.Initialize(database); err != nil {
-		return nil, nil, fmt.Errorf("database initialization: %w", err)
+		return nil, nil, nil, fmt.Errorf("database initialization: %w", err)
 	}
 
-	return logger, database, nil
+	globalRulesPath := filepath.Join(dir, "rules.json")
+	projectRulesPath, err := findProjectRulesPath()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("project rules: %w", err)
+	}
+	rules, err := permissions.NewRulePolicy(globalRulesPath, projectRulesPath)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("rule policy: %w", err)
+	}
+
+	return logger, database, rules, nil
+}
+
+func findProjectRulesPath() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	start := dir
+	for {
+		candidate := filepath.Join(dir, ".harness", "rules.json")
+		if _, err := os.Stat(candidate); err != nil {
+			return candidate, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Join(start, ".harness", "rules.json"), nil
+		}
+		dir = parent
+	}
 }

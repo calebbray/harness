@@ -19,7 +19,7 @@ func main() {
 		return
 	}
 
-	logger, database, err := initialize()
+	logger, database, rulePolicy, err := initialize()
 	if err != nil {
 		log.Fatal("could not initialize database and log artifacts", err)
 	}
@@ -42,6 +42,7 @@ func main() {
 		Client:              c,
 		Logger:              logger.Logger,
 		Database:            database,
+		RulePolicy:          rulePolicy,
 	})
 
 	if len(os.Args) > 1 {

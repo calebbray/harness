@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/calebbray/personal-agent/internal/permissions"
 	"github.com/calebbray/personal-agent/internal/tools/jira"
 )
 
@@ -124,7 +125,7 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 		)
 	}
 
-	connectMCPServers(r)
+	// connectMCPServers(r)
 	return r
 }
 
@@ -154,6 +155,10 @@ func handleBashCommand(input json.RawMessage) (string, error) {
 	var in bashInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", err
+	}
+
+	if permissions.IsForbidden(in.Command) {
+		return "", fmt.Errorf("refused: command references a protected path")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
@@ -204,6 +209,10 @@ func handleReadFile(input json.RawMessage) (string, error) {
 		return "", err
 	}
 
+	if permissions.IsForbidden(in.Filepath) {
+		return "", fmt.Errorf("refused: command references a protected path")
+	}
+
 	data, err := os.ReadFile(in.Filepath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
@@ -230,6 +239,10 @@ func handleWriteFile(input json.RawMessage) (string, error) {
 	var in writeFileInput
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", err
+	}
+
+	if permissions.IsForbidden(in.Path) {
+		return "", fmt.Errorf("refused: command references a protected path")
 	}
 
 	if err := os.MkdirAll(filepath.Dir(in.Path), 0o755); err != nil {

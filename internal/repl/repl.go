@@ -132,8 +132,17 @@ func (r *Repl) handleModel(a *command.Args) error {
 	return nil
 }
 
-func (r *Repl) confirm(toolName string, input json.RawMessage) bool {
-	fmt.Printf("\nrun %s with input %s? [y/N]", toolName, input)
+func (r *Repl) confirm(toolName string, input json.RawMessage) agent.Decision {
+	fmt.Printf("\nrun %s with input %s?\n[y]es once  [n]o  [a]lways allow (project)  [b]lock always (project): ", toolName, input)
 	r.scanner.Scan()
-	return strings.ToLower(strings.TrimSpace(r.scanner.Text())) == "y"
+	switch strings.ToLower(strings.TrimSpace(r.scanner.Text())) {
+	case "y":
+		return agent.AllowOnce
+	case "a":
+		return agent.AlwaysAllowProject
+	case "b":
+		return agent.AlwaysDenyProject
+	default:
+		return agent.DenyOnce
+	}
 }
