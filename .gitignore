@@ -4,3 +4,8 @@ harness
 agent.db
 project.zip
 .harness
+.env.*
+!.env.example
+agent.db
+foo.json
+*.log
