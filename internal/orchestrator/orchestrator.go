@@ -8,6 +8,7 @@ import (
 )
 
 // executor needs to be safe to call concurrently acress different nodes
+// Executor is responsible for uptdating node statuses to either approved or needs rework
 type Executor func(*plan.TaskNode) error
 
 func Run(p *plan.Plan, exec Executor) error {
@@ -31,8 +32,6 @@ func Run(p *plan.Plan, exec Executor) error {
 					n.Status = plan.Failed
 					return
 				}
-
-				n.Status = plan.Approved
 			}(n)
 		}
 		wg.Wait()

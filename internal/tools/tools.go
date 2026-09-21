@@ -63,12 +63,17 @@ func (r *Registry) Dispatch(name string, input json.RawMessage) (result string, 
 	return "no tool with given name", true
 }
 
+const bashDescription = "Execute a shell command and return its standard out, error, and exit code. Use for things like running programs, listing files, git, and build tools"
+const readFileDescription = "Read the entire contents of a file at a given path"
+const writeFileDescription = "Write (overwrite) the given contents to a file at the given path. Creates parent directories if needed."
+const getDateDescription = "get the current date in RFC3339 format."
+
 func Default(issueSaver jira.JiraSaver) *Registry {
 	r := NewRegistry()
 
 	r.Register(
 		"bash",
-		"Execute a shell command and return its standard out, error, and exit code. Use for things like running programs, listing files, git, and build tools",
+		bashDescription,
 		bashSchema,
 		handleBashCommand,
 		true,
@@ -76,7 +81,7 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 
 	r.Register(
 		"read_file",
-		"Read the entire contents of a file at a given path",
+		readFileDescription,
 		readFileSchema,
 		handleReadFile,
 		false,
@@ -84,7 +89,7 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 
 	r.Register(
 		"write_file",
-		"Write (overwrite) the given contents to a file at the given path. Creates parent directories if needed.",
+		writeFileDescription,
 		writeFileSchema,
 		handleWriteFile,
 		true,
@@ -92,7 +97,7 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 
 	r.Register(
 		"get_date",
-		"get the current date in RFC3339 format.",
+		getDateDescription,
 		getDateSchema,
 		handleGetDate,
 		false,
@@ -127,6 +132,24 @@ func Default(issueSaver jira.JiraSaver) *Registry {
 
 	// connectMCPServers(r)
 	return r
+}
+
+// func Scoped(dir string) *Registry {
+// 	r := NewRegistry()
+//
+// 	r.Register("bash", bashDescription, bashSchema, scopedBashHandler(dir), true)
+// 	r.Register("read_file", readFileDescription, readFileSchema, scopedReadFileHandler(dir), false)
+// 	r.Register("write_file", writeFileDescription, writeFileSchema, scopedWriteFileHandler(dir), true)
+// 	r.Register("get_date", getDateDescription, getDateSchema, handleGetDate, false)
+//
+// 	return r
+// }
+
+func resolvePath(dir, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(dir, path)
 }
 
 type ToolDef struct {

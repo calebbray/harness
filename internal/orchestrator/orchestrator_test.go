@@ -51,9 +51,33 @@ func TestOrchestration(t *testing.T) {
 	})
 }
 
+func TestRunReworkRetriesUntilApproved(t *testing.T) {
+	n, err := plan.NewTaskNode("solo", "no deps")
+	require.NoError(t, err)
+	p, err := plan.NewPlan("rework", n)
+	require.NoError(t, err)
+
+	calls := 0
+
+	exec := func(node *plan.TaskNode) error {
+		calls++
+		if calls == 1 {
+			node.Status = plan.NeedsRework
+			return nil
+		}
+		node.Status = plan.Approved
+		return nil
+	}
+
+	require.NoError(t, Run(p, exec))
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, plan.Approved, n.Status)
+}
+
 func executeLogger(t *testing.T) Executor {
 	t.Helper()
 	return func(n *plan.TaskNode) error {
+		n.Status = plan.Approved
 		t.Logf("node executed %s (%s)", n.Title, n.Id)
 		return nil
 	}
