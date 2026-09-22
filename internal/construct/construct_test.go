@@ -1,11 +1,14 @@
 package construct
 
 import (
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/calebbray/personal-agent/internal/client"
 	"github.com/calebbray/personal-agent/internal/orchestrator"
 	"github.com/calebbray/personal-agent/internal/plan"
 	"github.com/calebbray/personal-agent/internal/worktree"
@@ -100,6 +103,42 @@ func TestExecuteFailurePath(t *testing.T) {
 	// the "no cleanup" assertion — a's worktree should still exist on disk
 	_, statErr := os.Stat(filepath.Join(root, a.Id.String()))
 	assert.NoError(t, statErr)
+}
+
+func TestAgentWorkWritesFilesInsideWorktree(t *testing.T) {
+	worktreeDir := t.TempDir()
+
+	n, err := plan.NewTaskNode("write a greeting", "create hello.txt with a friendly message")
+	require.NoError(t, err)
+
+	writeInput, err := json.Marshal(map[string]string{
+		"path":     "hello.txt",
+		"contents": "hi from the worker",
+	})
+	require.NoError(t, err)
+
+	mock := &client.MockClient{
+		Responses: []*client.Response{
+			{
+				StopReason: client.StopReasonToolUse,
+				Content: []client.Content{
+					client.ToolUseContent{ContentType: "tool_use", Id: "call_1", Name: "write_file", Input: writeInput},
+				},
+			},
+			{
+				StopReason: client.StopReasonEndTurn,
+				Content:    []client.Content{client.TextContent{ContentType: "text", Text: "wrote hello.txt"}},
+			},
+		},
+	}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	err = AgentWork(mock, logger)(worktreeDir, n)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(worktreeDir, "hello.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "hi from the worker", string(data))
 }
 
 func requireMarkers(t *testing.T, root string, id uuid.UUID, filenames ...string) {
