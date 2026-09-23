@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/calebbray/personal-agent/internal/permissions"
 )
 
 func Scoped(dir string) *Registry {
@@ -19,6 +21,9 @@ func Scoped(dir string) *Registry {
 		if err := json.Unmarshal(input, &in); err != nil {
 			return "", err
 		}
+		if permissions.IsForbidden(in.Command) {
+			return "", fmt.Errorf("refused: command references a protected path")
+		}
 		return runShell(dir, in.Command)
 	}, true)
 
@@ -27,7 +32,11 @@ func Scoped(dir string) *Registry {
 		if err := json.Unmarshal(input, &in); err != nil {
 			return "", err
 		}
-		data, err := os.ReadFile(resolvePath(dir, in.Filepath))
+		path := resolvePath(dir, in.Filepath)
+		if permissions.IsForbidden(path) {
+			return "", fmt.Errorf("refused: command references a protected path")
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("failed to read file: %w", err)
 		}
@@ -40,6 +49,9 @@ func Scoped(dir string) *Registry {
 			return "", err
 		}
 		path := resolvePath(dir, in.Path)
+		if permissions.IsForbidden(path) {
+			return "", fmt.Errorf("refused: command references a protected path")
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return "", fmt.Errorf("could not create parent dirs: %w", err)
 		}
